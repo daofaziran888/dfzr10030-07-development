@@ -3,7 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Overview from '@/views/Overview.vue'
 const Datasource = () => import('@/views/datasource/index.vue')
 const Crawler = () => import('@/views/crawler/index.vue')
-const Apiclient = () => import('@/views/apiclient/index.vue')
+const ApiClient = () => import('@/views/apiclient/index.vue')
 const Incremental = () => import('@/views/incremental/index.vue')
 const RobotTask = () => import('@/views/robot_task/index.vue')
 const Ingestion = () => import('@/views/ingestion/index.vue')
@@ -25,7 +25,7 @@ const router = createRouter({
     { path: '/', name: 'overview', component: Overview },
     { path: '/datasource', name: 'datasource', component: Datasource },
     { path: '/crawler', name: 'crawler', component: Crawler },
-    { path: '/apiclient', name: 'apiclient', component: Apiclient },
+    { path: '/apiclient', name: 'apiclient', component: ApiClient },
     { path: '/incremental', name: 'incremental', component: Incremental },
     { path: '/robot_task', name: 'robot_task', component: RobotTask },
     { path: '/ingestion', name: 'ingestion', component: Ingestion },

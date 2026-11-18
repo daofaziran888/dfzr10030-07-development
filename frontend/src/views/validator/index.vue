@@ -72,6 +72,93 @@
       </form>
     </div>
 
+    <section class="panel" data-testid="audit-panel">
+      <header class="panel-head">
+        <div>
+          <h3>解析批次核对</h3>
+          <p class="page-desc">
+            只读读取解析批次清单与标准化字段包，按来源文件汇总字段缺失和类型异常，
+            回写核对结论并生成待复核清单。
+          </p>
+        </div>
+        <button class="btn ghost" type="button" data-testid="refresh-audit" @click="loadAudit()">刷新批次</button>
+      </header>
+
+      <table class="data-table">
+        <thead>
+          <tr><th>批次编号</th><th>映射口径</th><th>状态</th><th>成功/失败</th><th>字段顺序</th><th>校验状态</th><th>复核版本</th><th>待复核</th><th>动作</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in auditBatches" :key="row.id" :data-testid="`audit-row-${row.id}`" :data-status="String(row.校验状态)">
+            <td>{{ row.批次编号 }}</td>
+            <td>{{ row.映射口径 }}</td>
+            <td>{{ row.状态 }}</td>
+            <td>{{ row.成功条数 }}/{{ row.失败条数 }}</td>
+            <td>{{ (row.字段顺序 || []).join('、') }}</td>
+            <td>{{ row.校验状态 }}</td>
+            <td>v{{ row.复核版本 }}</td>
+            <td>{{ row.待复核条数 }}</td>
+            <td class="row-actions">
+              <button class="link" type="button" :data-testid="`audit-review-${row.id}`" @click="reviewBatch(row)">
+                {{ row.校验状态 === '已校验' ? '重新核对' : '执行核对' }}
+              </button>
+              <button class="link" type="button" :data-testid="`audit-reviews-${row.id}`" @click="openReviews(row)">待复核清单</button>
+            </td>
+          </tr>
+          <tr v-if="!auditBatches.length">
+            <td colspan="9" class="empty-state">暂无解析批次，请先在格式解析器页提交批量解析</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p v-if="auditMessage" class="hint-text" data-testid="audit-message">{{ auditMessage }}</p>
+
+      <div v-if="auditResult" class="batch-detail" data-testid="audit-result">
+        <h4>核对汇总</h4>
+        <p class="hint-text">
+          缺失字段 {{ auditResult.汇总?.缺失字段数 ?? 0 }} 处 · 类型异常 {{ auditResult.汇总?.类型异常数 ?? 0 }} 处 ·
+          通过 {{ auditResult.汇总?.通过条数 ?? 0 }} 条 · 待复核 {{ auditResult.汇总?.待复核条数 ?? 0 }} 条 ·
+          业务记录 {{ auditResult.业务记录数 ?? 0 }} 条
+        </p>
+        <table class="data-table">
+          <thead>
+            <tr><th>来源文件</th><th>输入编号</th><th>映射版本</th><th>缺失字段</th><th>类型异常</th><th>结论</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in auditResult.按来源文件" :key="item.输入编号" :data-testid="`audit-file-${item.输入编号}`">
+              <td>{{ item.来源文件 }}</td>
+              <td>{{ item.输入编号 }}</td>
+              <td>{{ item.映射版本 }}</td>
+              <td>{{ item.缺失字段.map((field: string) => `${field}（缺失）`).join('、') || '—' }}</td>
+              <td>{{ item.类型异常.map((entry: any) => `${entry.字段}（类型异常）${entry.原因}`).join('；') || '—' }}</td>
+              <td>{{ item.结论 }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div v-if="reviews.length" class="batch-detail" data-testid="review-list">
+        <h4>待复核清单{{ reviewBatchNo ? `（${reviewBatchNo}）` : '' }}</h4>
+        <table class="data-table">
+          <thead>
+            <tr><th>复核编号</th><th>批次编号</th><th>来源文件</th><th>字段</th><th>问题类型</th><th>说明</th><th>复核状态</th><th>复核版本</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in reviews" :key="row.id" :data-testid="`review-row-${row.id}`" :data-status="String(row.复核状态)">
+              <td>{{ row.复核编号 }}</td>
+              <td>{{ row.批次编号 }}</td>
+              <td>{{ row.来源文件 }}</td>
+              <td>{{ row.字段 }}</td>
+              <td>{{ row.问题类型 }}</td>
+              <td>{{ row.说明 }}</td>
+              <td>{{ row.复核状态 }}</td>
+              <td>v{{ row.复核版本 }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <footer class="page-foot">
       <span>共 {{ total }} 条采集结果校验记录</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
@@ -82,7 +169,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
-import { request } from '@/api/client'
+import { fetchJson, request } from '@/api/client'
 
 type Row = Record<string, string | number | null>
 
@@ -184,5 +271,64 @@ async function reload() {
   }
 }
 
-onMounted(reload)
+type AuditBatch = Record<string, any>
+type ReviewRow = Record<string, any>
+
+const auditBatches = ref<AuditBatch[]>([])
+const auditMessage = ref('')
+const auditResult = ref<Record<string, any> | null>(null)
+const reviews = ref<ReviewRow[]>([])
+const reviewBatchNo = ref('')
+
+async function loadAudit(clearMessage = true) {
+  if (clearMessage) auditMessage.value = ''
+  try {
+    const payload = await fetchJson<{ items: AuditBatch[] }>('/api/validator/batches')
+    auditBatches.value = payload.items ?? []
+  } catch (error) {
+    auditMessage.value = error instanceof Error ? error.message : '解析批次读取失败'
+  }
+}
+
+async function reviewBatch(row: AuditBatch) {
+  auditMessage.value = ''
+  reviews.value = []
+  try {
+    const expected = Number(row.复核版本) > 0 ? Number(row.复核版本) : undefined
+    const response = await request(`/api/validator/batches/${row.id}/review`, {
+      method: 'POST',
+      body: JSON.stringify({ reviewer: '值班校验', expected_version: expected }),
+    })
+    const payload = await response.json()
+    auditMessage.value = payload.message || (payload.ok ? '核对完成' : '核对未生效')
+    if (payload.ok) {
+      auditResult.value = payload.result
+      reviews.value = payload.result?.待复核清单 ?? []
+      reviewBatchNo.value = String(row.批次编号)
+      await loadAudit(false)
+    } else {
+      auditResult.value = null
+      await loadAudit(false)
+    }
+  } catch (error) {
+    auditMessage.value = error instanceof Error ? error.message : '核对失败'
+  }
+}
+
+async function openReviews(row: AuditBatch) {
+  auditMessage.value = ''
+  try {
+    const payload = await fetchJson<{ items: ReviewRow[] }>(
+      `/api/validator/reviews?batch_no=${encodeURIComponent(String(row.批次编号))}`,
+    )
+    reviews.value = payload.items ?? []
+    reviewBatchNo.value = String(row.批次编号)
+  } catch (error) {
+    auditMessage.value = error instanceof Error ? error.message : '待复核清单读取失败'
+  }
+}
+
+onMounted(async () => {
+  await Promise.all([reload(), loadAudit()])
+})
 </script>

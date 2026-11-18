@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 
 from app.schemas import ActionPayload, ActionResult, EntryPayload, PageResult
 from app.services.parser import ParserService
+from app.services.parser_batch import POLICIES, parser_batch_service
 
 router = APIRouter(prefix="/api/parser", tags=["格式解析器"])
 
@@ -63,6 +64,69 @@ def export_entries(
     return StreamingResponse(
         iter([output.getvalue()]), media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="parser.csv"'})
+
+
+@router.get("/mappings")
+def list_mappings(input_format: str | None = Query(default=None)) -> dict:
+    """字段映射版本清单：同一输入格式的多个可用版本会一起列出。"""
+    return {"items": parser_batch_service.list_mappings(input_format), "policies": POLICIES}
+
+
+@router.get("/inputs")
+def list_inputs(
+    input_format: str | None = Query(default=None),
+    keyword: str | None = Query(default=None),
+) -> dict:
+    """可批量选择的输入文件；操作人员可多选后一次提交。"""
+    return {"items": parser_batch_service.list_inputs(input_format, keyword)}
+
+
+@router.get("/batches")
+def list_batches() -> dict:
+    """解析批次清单：包含状态、字段顺序、校验状态与复核版本。"""
+    return {"items": parser_batch_service.list_batches()}
+
+
+@router.get("/batches/{batch_id}")
+def get_batch(batch_id: int) -> dict:
+    """单批次详情：解析批次清单 + 标准化字段包 + 映射快照。"""
+    batch = parser_batch_service.get_batch(batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail=f"解析批次 {batch_id} 不存在或已归档")
+    return batch
+
+
+@router.get("/batches/{batch_id}/records")
+def list_records(batch_id: int) -> dict:
+    """业务记录回查：校验服务接力生成、格式解析服务按批次读取。"""
+    batch = parser_batch_service.get_batch(batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail=f"解析批次 {batch_id} 不存在或已归档")
+    return {"items": parser_batch_service.list_records(str(batch.get("批次编号")))}
+
+
+@router.post("/batches")
+def create_batch(payload: dict[str, object]) -> dict:
+    """一次提交多条输入，逐条生成批次清单与字段包；任一条映射不唯一则整批不落地。"""
+    inputs = payload.get("inputs")
+    if not isinstance(inputs, list) or not inputs:
+        return {"ok": False, "message": "至少选择一条输入才能生成解析批次", "errors": []}
+    policy = payload.get("policy") if isinstance(payload.get("policy"), str) else None
+    batch, message, errors = parser_batch_service.create_batch(
+        inputs, policy, str(payload.get("remark") or ""))
+    return {
+        "ok": batch is not None,
+        "message": message,
+        "batch": batch,
+        "errors": errors,
+    }
+
+
+@router.post("/batches/{batch_id}/reparse")
+def reparse_batch(batch_id: int) -> dict:
+    """以批次冻结的旧映射版本为准重算，原摘要保留不动。"""
+    batch, message = parser_batch_service.reparse_batch(batch_id)
+    return {"ok": batch is not None, "message": message, "batch": batch}
 
 
 @router.get("/{entry_id}", response_model=dict)

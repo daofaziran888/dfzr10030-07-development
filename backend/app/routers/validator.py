@@ -8,7 +8,9 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from app.schemas import ActionPayload, ActionResult, EntryPayload, PageResult
+from app.services.parser_batch import parser_batch_service
 from app.services.validator import ValidatorService
+from app.services.validator_audit import validator_audit_service
 
 router = APIRouter(prefix="/api/validator", tags=["采集结果校验"])
 
@@ -63,6 +65,50 @@ def export_entries(
     return StreamingResponse(
         iter([output.getvalue()]), media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="validator.csv"'})
+
+
+@router.get("/batches")
+def list_batches() -> dict:
+    """校验侧看到的解析批次摘要：只读，不拿到可写引用。"""
+    return {"items": validator_audit_service.list_batches()}
+
+
+@router.get("/batches/{batch_id}/conclusion")
+def get_conclusion(batch_id: int) -> dict:
+    """格式解析服务回查入口：只返回当前有效的复核结论。"""
+    conclusion = validator_audit_service.get_conclusion(batch_id)
+    if conclusion is None:
+        raise HTTPException(status_code=404, detail=f"解析批次 {batch_id} 不存在或已归档")
+    return conclusion
+
+
+@router.post("/batches/{batch_id}/review")
+def review_batch(batch_id: int, payload: dict[str, object] | None = None) -> dict:
+    """读取标准化字段包并回写解析批次；每批并发复核只保留一份有效结论。"""
+    body = payload or {}
+    expected = body.get("expected_version")
+    try:
+        expected_version = int(expected) if expected is not None else None
+    except (TypeError, ValueError):
+        return {"ok": False, "message": "复核版本必须是整数"}
+    result, message = validator_audit_service.review(
+        batch_id,
+        reviewer=str(body.get("reviewer") or "") or None,
+        expected_version=expected_version,
+    )
+    return {"ok": result is not None, "message": message, "result": result}
+
+
+@router.get("/reviews")
+def list_reviews(batch_no: str | None = Query(default=None), status: str | None = Query(default=None)) -> dict:
+    """待复核清单；失效的历史条目保留但不再参与复核。"""
+    return {"items": validator_audit_service.list_reviews(batch_no, status)}
+
+
+@router.get("/records")
+def list_records(batch_no: str | None = Query(default=None)) -> dict:
+    """校验服务接力生成的业务记录。"""
+    return {"items": parser_batch_service.list_records(batch_no)}
 
 
 @router.get("/{entry_id}", response_model=dict)

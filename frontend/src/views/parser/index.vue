@@ -72,6 +72,202 @@
       </form>
     </div>
 
+    <section class="panel" data-testid="batch-panel">
+      <header class="panel-head">
+        <div>
+          <h3>批量解析</h3>
+          <p class="page-desc">一次勾选多条输入（CSV / JSON / XML），提交后逐条生成解析批次清单与标准化字段包。</p>
+        </div>
+        <span class="tag">批次内字段类型必须唯一</span>
+      </header>
+
+      <div class="batch-form">
+        <label class="filter-item">
+          <span>映射口径</span>
+          <select v-model="policy" data-testid="policy">
+            <option v-for="item in policies" :key="item" :value="item">{{ item }}</option>
+          </select>
+        </label>
+        <label class="filter-item grow">
+          <span>批次备注</span>
+          <input v-model="remark" data-testid="batch-remark" placeholder="可选，例如：11 月订单补采" />
+        </label>
+        <button class="btn" type="button" data-testid="select-all" @click="toggleAll">
+          {{ allSelected ? '取消全选' : '全选输入' }}
+        </button>
+        <button class="btn primary" type="button" data-testid="submit-batch" :disabled="submitting" @click="submitBatch">
+          {{ submitting ? '解析中…' : `提交解析（${selectedInputs.length} 条）` }}
+        </button>
+      </div>
+
+      <table class="data-table">
+        <thead>
+          <tr><th>选择</th><th>输入编号</th><th>文件名</th><th>输入格式</th><th>命中映射</th><th>说明</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in inputs" :key="row.id" :data-testid="`input-row-${row.id}`">
+            <td>
+              <input
+                type="checkbox"
+                :data-testid="`input-${row.id}`"
+                :value="row.id"
+                :checked="selectedInputs.includes(row.id)"
+                @change="toggleInput(row.id)"
+              />
+            </td>
+            <td>{{ row.输入编号 }}</td>
+            <td>{{ row.文件名 }}</td>
+            <td>{{ row.输入格式 }}</td>
+            <td>{{ row.命中映射编号 || '—' }}</td>
+            <td>{{ row.说明 || '—' }}</td>
+          </tr>
+          <tr v-if="!inputs.length">
+            <td colspan="6" class="empty-state">暂无可解析的输入文件</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p v-if="batchMessage" class="hint-text" data-testid="batch-message">{{ batchMessage }}</p>
+      <ul v-if="batchErrors.length" class="error-list" data-testid="batch-errors">
+        <li v-for="(item, index) in batchErrors" :key="`${item.输入}-${index}`">
+          <strong>{{ item.输入 }}</strong>：{{ item.失败原因 }}
+        </li>
+      </ul>
+
+      <div class="panel-subhead">
+        <h4>字段映射版本</h4>
+        <button class="link" type="button" data-testid="toggle-mappings" @click="showMappings = !showMappings">
+          {{ showMappings ? '收起映射版本' : '查看映射版本' }}
+        </button>
+      </div>
+      <table v-if="showMappings" class="data-table" data-testid="mapping-table">
+        <thead>
+          <tr><th>映射编号</th><th>输入格式</th><th>版本</th><th>目标字段</th><th>类型转换</th><th>确认时间</th><th>状态</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in mappings" :key="row.id" :data-testid="`mapping-row-${row.id}`">
+            <td>{{ row.映射编号 }}</td>
+            <td>{{ row.输入格式 }}</td>
+            <td>{{ row.映射版本 }}</td>
+            <td>{{ (row.字段映射 || []).map((item: any) => item.目标字段).join('、') }}</td>
+            <td>{{ typeSummary(row.类型转换) }}</td>
+            <td>{{ row.确认时间 }}</td>
+            <td>{{ row.状态 }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel" data-testid="batch-list-panel">
+      <header class="panel-head">
+        <div>
+          <h3>解析批次清单</h3>
+          <p class="page-desc">每条输入都能追溯到所用映射版本、标准化字段结果与失败原因。</p>
+        </div>
+        <button class="btn ghost" type="button" data-testid="refresh-batches" @click="loadBatches">刷新批次</button>
+      </header>
+
+      <table class="data-table">
+        <thead>
+          <tr><th>批次编号</th><th>映射口径</th><th>状态</th><th>输入条数</th><th>成功/失败</th><th>字段顺序</th><th>校验状态</th><th>复核版本</th><th>动作</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in batches" :key="row.id" :data-testid="`batch-row-${row.id}`" :data-status="String(row.状态)">
+            <td>{{ row.批次编号 }}</td>
+            <td>{{ row.映射口径 }}</td>
+            <td>{{ row.状态 }}</td>
+            <td>{{ row.输入条数 }}</td>
+            <td>{{ row.成功条数 }}/{{ row.失败条数 }}</td>
+            <td>{{ (row.字段顺序 || []).join('、') }}</td>
+            <td>{{ row.校验状态 }}</td>
+            <td>v{{ row.复核版本 }}</td>
+            <td class="row-actions">
+              <button class="link" type="button" :data-testid="`batch-view-${row.id}`" @click="openBatch(row.id)">查看明细</button>
+              <button class="link" type="button" :data-testid="`batch-reparse-${row.id}`" @click="reparseBatch(row.id)">按原映射重算</button>
+            </td>
+          </tr>
+          <tr v-if="!batches.length">
+            <td colspan="9" class="empty-state">暂无解析批次，先勾选输入并提交解析</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div v-if="activeBatch" class="batch-detail" data-testid="batch-detail">
+        <header class="panel-head">
+          <div>
+            <h4>{{ activeBatch.批次编号 }} 明细</h4>
+            <p class="page-desc">
+              口径 {{ activeBatch.映射口径 }} · 原摘要 {{ activeBatch.原摘要 }} · 当前摘要 {{ activeBatch.当前摘要 }} ·
+              重算 {{ activeBatch.重算次数 }} 次
+            </p>
+          </div>
+          <button class="btn ghost" type="button" data-testid="close-batch-detail" @click="activeBatch = null">关闭明细</button>
+        </header>
+
+        <h4>映射版本清单</h4>
+        <table class="data-table">
+          <thead>
+            <tr><th>输入编号</th><th>来源文件</th><th>输入格式</th><th>映射编号</th><th>映射版本</th><th>映射确认时间</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in activeBatch.映射版本清单" :key="item.输入编号" :data-testid="`map-line-${item.输入编号}`">
+              <td>{{ item.输入编号 }}</td>
+              <td>{{ item.文件名 }}</td>
+              <td>{{ item.输入格式 }}</td>
+              <td>{{ item.映射编号 }}</td>
+              <td>{{ item.映射版本 }}</td>
+              <td>{{ item.映射确认时间 }}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h4>标准化字段包</h4>
+        <p class="hint-text">
+          字段顺序：{{ activeBatch.标准化字段包?.字段顺序?.join(' → ') || '—' }}；
+          字段类型：{{ typeSummary(activeBatch.标准化字段包?.字段类型表) }}
+        </p>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>输入编号</th><th>来源文件</th><th>映射版本</th><th>状态</th>
+              <th>字段结果</th><th>失败原因</th><th>校验结论</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="item in activeBatch.items"
+              :key="item.输入编号"
+              :data-testid="`batch-item-${item.输入编号}`"
+              :data-status="item.状态"
+            >
+              <td>{{ item.输入编号 }}</td>
+              <td>{{ item.文件名 }}</td>
+              <td>{{ item.映射编号 }}@{{ item.映射版本 }}</td>
+              <td>{{ item.状态 }}</td>
+              <td>{{ fieldText(item.标准化字段) }}</td>
+              <td>{{ item.失败原因 || '—' }}</td>
+              <td>{{ item.校验结论 || '未校验' }}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h4>校验回查</h4>
+        <p class="hint-text" data-testid="batch-check-state">
+          校验状态 {{ activeBatch.校验状态 }} · 复核状态 {{ activeBatch.复核状态 }} ·
+          复核版本 v{{ activeBatch.复核版本 }} ·
+          有效复核 {{ activeBatch.有效复核 ? `v${activeBatch.有效复核.复核版本}` : '无' }} ·
+          业务记录 {{ activeBatch.业务记录数 }} 条
+        </p>
+        <button class="btn ghost" type="button" data-testid="load-conclusion" @click="loadConclusion(activeBatch.id)">
+          回查校验结论
+        </button>
+        <p v-if="conclusion" class="hint-text" data-testid="conclusion-text">
+          有效 {{ conclusion.有效 ? '是' : '否' }} · 校验状态 {{ conclusion.校验状态 }} · 待复核
+          {{ conclusion.待复核清单?.length || 0 }} 条
+        </p>
+      </div>
+    </section>
+
     <footer class="page-foot">
       <span>共 {{ total }} 条格式解析器记录</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
@@ -82,7 +278,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
-import { request } from '@/api/client'
+import { fetchJson, request } from '@/api/client'
 
 type Row = Record<string, string | number | null>
 
@@ -184,5 +380,152 @@ async function reload() {
   }
 }
 
-onMounted(reload)
+type MappingRow = Record<string, any>
+type BatchRow = Record<string, any>
+type BatchError = { 输入: string; 失败原因: string }
+
+const policies = ref<string[]>(['最新确认', '按输入命中'])
+const policy = ref('最新确认')
+const remark = ref('')
+const inputs = ref<MappingRow[]>([])
+const mappings = ref<MappingRow[]>([])
+const selectedInputs = ref<number[]>([])
+const submitting = ref(false)
+const batchMessage = ref('')
+const batchErrors = ref<BatchError[]>([])
+const batches = ref<BatchRow[]>([])
+const activeBatch = ref<BatchRow | null>(null)
+const conclusion = ref<Record<string, any> | null>(null)
+const showMappings = ref(false)
+
+const allSelected = computed(
+  () => inputs.value.length > 0 && selectedInputs.value.length === inputs.value.length,
+)
+
+function typeSummary(table: Record<string, string> | undefined | null) {
+  if (!table) return '—'
+  return Object.entries(table).map(([field, kind]) => `${field}:${kind}`).join('、')
+}
+
+function fieldText(values: Record<string, unknown> | undefined | null) {
+  if (!values) return '—'
+  return Object.entries(values)
+    .map(([field, value]) => `${field}=${value === null || value === '' ? '（空）' : value}`)
+    .join('，')
+}
+
+function toggleInput(id: number) {
+  selectedInputs.value = selectedInputs.value.includes(id)
+    ? selectedInputs.value.filter((item) => item !== id)
+    : [...selectedInputs.value, id]
+}
+
+function toggleAll() {
+  selectedInputs.value = allSelected.value ? [] : inputs.value.map((row) => Number(row.id))
+}
+
+async function loadInputs() {
+  try {
+    const payload = await fetchJson<{ items: MappingRow[] }>('/api/parser/inputs')
+    inputs.value = payload.items ?? []
+  } catch (error) {
+    batchErrors.value = []
+    batchMessage.value = error instanceof Error ? error.message : '输入文件读取失败'
+  }
+}
+
+async function loadMappings() {
+  try {
+    const payload = await fetchJson<{ items: MappingRow[]; policies: string[] }>('/api/parser/mappings')
+    mappings.value = payload.items ?? []
+    if (payload.policies?.length) policies.value = payload.policies
+  } catch {
+    mappings.value = []
+  }
+}
+
+async function loadBatches() {
+  try {
+    const payload = await fetchJson<{ items: BatchRow[] }>('/api/parser/batches')
+    batches.value = payload.items ?? []
+    if (activeBatch.value) {
+      const stillThere = batches.value.find((row) => row.id === activeBatch.value?.id)
+      if (stillThere) await openBatch(Number(stillThere.id))
+      else activeBatch.value = null
+    }
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '解析批次读取失败'
+  }
+}
+
+async function submitBatch() {
+  batchMessage.value = ''
+  batchErrors.value = []
+  errorMessage.value = ''
+  if (!selectedInputs.value.length) {
+    batchMessage.value = '至少勾选一条输入后再提交解析'
+    return
+  }
+  submitting.value = true
+  try {
+    const response = await request('/api/parser/batches', {
+      method: 'POST',
+      body: JSON.stringify({
+        inputs: selectedInputs.value,
+        policy: policy.value,
+        remark: remark.value,
+      }),
+    })
+    const payload = await response.json()
+    batchMessage.value = payload.message || (payload.ok ? '批次已生成' : '批次未生成')
+    batchErrors.value = payload.errors ?? []
+    if (payload.ok && payload.batch) {
+      activeBatch.value = payload.batch
+      selectedInputs.value = []
+      remark.value = ''
+      await loadBatches()
+    }
+  } catch (error) {
+    batchMessage.value = error instanceof Error ? error.message : '批量解析失败'
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function openBatch(id: number) {
+  conclusion.value = null
+  try {
+    activeBatch.value = await fetchJson<BatchRow>(`/api/parser/batches/${id}`)
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '批次明细读取失败'
+  }
+}
+
+async function reparseBatch(id: number) {
+  errorMessage.value = ''
+  try {
+    const response = await request(`/api/parser/batches/${id}/reparse`, { method: 'POST' })
+    const payload = await response.json()
+    batchMessage.value = payload.message || '重算完成'
+    if (payload.ok && payload.batch) {
+      activeBatch.value = payload.batch
+    }
+    await loadBatches()
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '重算失败'
+  }
+}
+
+async function loadConclusion(id: number) {
+  conclusion.value = null
+  try {
+    conclusion.value = await fetchJson<Record<string, any>>(`/api/validator/batches/${id}/conclusion`)
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '校验结论读取失败'
+  }
+}
+
+onMounted(async () => {
+  await Promise.all([reload(), loadInputs(), loadMappings(), loadBatches()])
+})
 </script>

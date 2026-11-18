@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.seed_parser_batch import PARSER_INPUT_ROWS, PARSER_MAPPING_ROWS
+
 SEED_ROWS: dict[str, list[dict[str, Any]]] = {
     "datasource": [{'id': 1,
   'status': '草稿',
@@ -615,5 +617,9 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
   '成功量': '采集报告样例3',
   '失败量': '采集报告样例3',
   '平均耗秒': '采集报告样例3',
-  '生成时间': '2026-09-03'}]
+  '生成时间': '2026-09-03'}],
+    "parser_mapping": PARSER_MAPPING_ROWS,
+    "parser_input": PARSER_INPUT_ROWS,
+    "parser_review": [],
+    "parser_batch": [],
 }

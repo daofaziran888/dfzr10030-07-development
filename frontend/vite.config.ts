@@ -20,7 +20,8 @@ export default defineConfig({
     open: false,
     strictPort: false,
     proxy: {
-      '/api': {
+      // 只代理 /api/ 下的接口：/apiclient 这类页面路由不能被 /api 前缀吞掉
+      '^/api/': {
         target: proxyTarget,
         changeOrigin: true,
       },
